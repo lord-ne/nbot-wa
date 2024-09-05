@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"nbot-wa/constants"
-	"nbot-wa/daily"
 	"nbot-wa/util"
 
+	"github.com/go-co-op/gocron"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal/v3"
 	"google.golang.org/api/calendar/v3"
@@ -29,7 +29,7 @@ type ProgramState struct {
 	Client                *whatsmeow.Client
 	MessageQueue          chan MessageToSend
 	CalendarEventsService *calendar.EventsService
-	DailyEventRunner      *daily.DailyRunner
+	MinyanScheduler       *gocron.Scheduler
 }
 
 func (state *ProgramState) HandleEvent(evt interface{}) {
@@ -37,7 +37,11 @@ func (state *ProgramState) HandleEvent(evt interface{}) {
 	case *events.Message:
 		fmt.Printf("Received message in '%v'\n", v.Info.Chat.String())
 
-		if slices.Contains(constants.ChatIDsToRead(), v.Info.Chat) {
+		if v.Info.IsFromMe {
+			return
+		}
+
+		if !v.Info.IsGroup || slices.Contains(constants.ChatIDsToRead(), v.Info.Chat) {
 			state.Client.MarkRead([]string{v.Info.ID}, time.Now(), v.Info.Chat, v.Info.Sender, types.ReceiptTypeRead)
 		}
 
@@ -45,7 +49,7 @@ func (state *ProgramState) HandleEvent(evt interface{}) {
 			state.HandleDebugMessage(v)
 		}
 
-		if v.Info.Chat == constants.ChatIDMinyan() {
+		if !v.Info.IsGroup || (v.Info.Chat == constants.ChatIDMinyan()) || (v.Info.Chat == constants.ChatIDBotTest()) {
 			state.HandleMinyanMessage(v)
 		}
 	}
@@ -81,7 +85,7 @@ func CreateAndSetupStandardProgramState() (*ProgramState, error) {
 		Client:                client,
 		MessageQueue:          make(chan MessageToSend, 1000),
 		CalendarEventsService: calendar.NewEventsService(calendarBaseService),
-		DailyEventRunner:      daily.MakeDailyRunner(1*time.Minute, constants.MinyanLocation()),
+		MinyanScheduler:       gocron.NewScheduler(constants.MinyanLocation()),
 	}
 
 	programState.SetupMessageQueue()
@@ -121,7 +125,7 @@ func main() {
 
 	time.Sleep(5 * time.Second)
 
-	programState.QueueSimpleStringMessage(constants.ChatIDMe(), "*Bot started*")
+	programState.QueueSimpleStringMessage(constants.ChatIDMe(), "```Bot started```")
 
 	// Wait for Ctrl+C
 	c := make(chan os.Signal, 1)

@@ -3,17 +3,24 @@ package main
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"nbot-wa/constants"
-	"nbot-wa/daily"
 	"nbot-wa/util"
 
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/api/calendar/v3"
+)
+
+var (
+	rSepharidic = regexp.MustCompile(`(?ims)^\s*se?(?:(?:f)|(?:ph))ara?dic?\s*(?:(?:\s)|(?:$))`)
+
+	rSimpleDate = regexp.MustCompile(`(?ims)^\s*(\d{1,2})/(\d{1,2})(?:/((?:\d{2})?\d{2}))?\s*$`)
 )
 
 func parseEventDateTime(t *calendar.EventDateTime) (time.Time, error) {
@@ -77,22 +84,53 @@ func parseEvents(events []*calendar.Event) ([]ParsedEvent, error) {
 	return parsedEvents, nil
 }
 
-func formatMinyanMessage(parsedEvents []ParsedEvent) (string, error) {
+func formatMinyanMessage(command *TimesCommand, parsedEvents []ParsedEvent) (string, error) {
 	var builder strings.Builder
 
+	builder.WriteString(command.header)
+	builder.WriteRune('\n')
+	builder.WriteString(command.date.Format("Monday, January 2"))
+	builder.WriteString(util.OrdinalSuffix(command.date.Day()))
+
+	if command.date.Year() != time.Now().In(constants.MinyanLocation()).Year() {
+		// Add year if different from current
+		builder.WriteRune(' ')
+		builder.WriteString(command.date.Format("2006"))
+	}
+
+	builder.WriteRune('\n')
+
 	if len(parsedEvents) <= 0 {
-		return "(no times to show)", nil
+		builder.WriteString("\n(no times to show)")
+	} else {
+		for _, event := range parsedEvents {
+			timeString := event.DateTime.In(constants.MinyanLocation()).Format(time.Kitchen)
+			// Narrow non-breaking space followed by small-caps AM/PM
+			timeString = strings.Replace(timeString, "AM", "\u202F\u1D00\u1D0D", 1)
+			timeString = strings.Replace(timeString, "PM", "\u202F\u1D18\u1D0D", 1)
+
+			builder.WriteString(fmt.Sprintf(
+				"\n*%v*: %v",
+				event.Name,
+				timeString,
+			))
+		}
 	}
 
-	for _, event := range parsedEvents {
-		builder.WriteString(fmt.Sprintf(
-			"\n*%v*: %v",
-			event.Name,
-			event.DateTime.In(constants.MinyanLocation()).Format(time.Kitchen),
-		))
+	message := builder.String()
+
+	if command.sephardic {
+		message = strings.ReplaceAll(message, "Shacharis", "Shaharit")
+		message = strings.ReplaceAll(message, "shacharis", "shaharit")
+		message = strings.ReplaceAll(message, "Mincha", "Minha")
+		message = strings.ReplaceAll(message, "mincha", "minha")
+		message = strings.ReplaceAll(message, "Maariv", "Arbit")
+		message = strings.ReplaceAll(message, "maariv", "arbit")
+		message = strings.ReplaceAll(message, "Slichot", "Selihot")
+		message = strings.ReplaceAll(message, "slichot", "selihot")
 	}
 
-	return builder.String(), nil
+	return message, nil
 }
 
 func (state *ProgramState) GetMinyanEventsForDate(date time.Time) (*calendar.Events, error) {
@@ -109,8 +147,8 @@ func (state *ProgramState) GetMinyanEventsForDate(date time.Time) (*calendar.Eve
 		Do()
 }
 
-func (state *ProgramState) GetMinyanMessageForDate(date time.Time, includePassed bool) (string, error) {
-	events, err := state.GetMinyanEventsForDate(date)
+func (state *ProgramState) GetMinyanMessage(command *TimesCommand) (string, error) {
+	events, err := state.GetMinyanEventsForDate(command.date)
 	if err != nil {
 		return "", err
 	}
@@ -121,82 +159,200 @@ func (state *ProgramState) GetMinyanMessageForDate(date time.Time, includePassed
 	}
 
 	cutoff := time.Now().In(constants.MinyanLocation()).Add(-5 * time.Minute)
-	if !includePassed {
+	if !command.includePassed {
 		parsedEvents = util.Filter(parsedEvents, func(event ParsedEvent) bool {
 			return event.DateTime.After(cutoff)
 		})
 	}
 
-	return formatMinyanMessage(parsedEvents)
+	return formatMinyanMessage(command, parsedEvents)
 }
 
-func (state *ProgramState) SendMinyanTimes(date time.Time, header string, chat types.JID, shouldSendOnError bool, includePassed bool) {
-	messageBody, err := state.GetMinyanMessageForDate(date, includePassed)
+func (state *ProgramState) SendMinyanTimes(command *TimesCommand, chat types.JID, shouldSendOnError bool) {
+	message, err := state.GetMinyanMessage(command)
 
 	if err != nil {
-		errorMessage := fmt.Sprintf("Error in HandleMinyanMessage: %v", err)
+		errorMessage := fmt.Sprintf("Error in HandleMinyanMessage: %q", err.Error())
 		fmt.Println(errorMessage)
-		state.QueueSimpleStringMessage(constants.ChatIDMe(), errorMessage)
 
 		if shouldSendOnError {
-			message := fmt.Sprintf("```There was an error retrieving the minyan times. Contact %s if the problem persists.```",
-				constants.MaintainerName)
-
-			state.QueueSimpleStringMessage(chat, message)
+			state.QueueSimpleStringMessage(chat, "```There was an error retrieving the minyan times```")
 		}
+
+		state.QueueSimpleStringMessage(constants.ChatIDMe(), fmt.Sprintf("```%s```", errorMessage))
+
 		return
 	}
-
-	message := fmt.Sprintf("%s\n%s\n%s",
-		header,
-		date.Format("Monday, January 02"),
-		messageBody)
 
 	state.QueueSimpleStringMessage(chat, message)
 }
 
 func (state *ProgramState) RegisterDailyEvents() {
 	// Send minyan times for today at 9:30
-	state.DailyEventRunner.AddEvent(&daily.Event{
-		TimeToRun: daily.TimeOfDay{
-			Hours:   9,
-			Minutes: 30,
-		},
-		CallbackFunc: func(scheduledTime time.Time) {
+	state.MinyanScheduler.Every(1).Day().At("09:30").Do(
+		func(scheduledTime time.Time) {
 			state.SendMinyanTimes(
-				scheduledTime.In(constants.MinyanLocation()),
-				"*Upcoming minyan times for today*",
+				&TimesCommand{
+					date:          scheduledTime.In(constants.MinyanLocation()),
+					header:        "*Upcoming minyan times for today*",
+					sephardic:     false,
+					includePassed: false,
+				},
 				constants.ChatIDMinyan(),
-				false,
 				false)
-		},
-	})
+		})
 
 	// Send minyan times for tomorrow
-	state.DailyEventRunner.AddEvent(&daily.Event{
-		TimeToRun: daily.TimeOfDay{
-			Hours:   20,
-			Minutes: 30,
-		},
-		CallbackFunc: func(scheduledTime time.Time) {
+	state.MinyanScheduler.Every(1).Day().At("20:30").Do(
+		func(scheduledTime time.Time) {
 			state.SendMinyanTimes(
-				scheduledTime.In(constants.MinyanLocation()).AddDate(0, 0, 1),
-				"*Minyan times for tomorrow*",
+				&TimesCommand{
+					date:          scheduledTime.In(constants.MinyanLocation()).AddDate(0, 0, 1),
+					header:        "*Minyan times for tomorrow*",
+					sephardic:     false,
+					includePassed: true,
+				},
 				constants.ChatIDMinyan(),
-				false,
-				true)
-		},
-	})
+				false)
+		})
+}
+
+// Copied from internal function in time package
+func daysIn(m time.Month, year int) int {
+	return time.Date(year, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
+func isDateValid(year int, month int, day int) bool {
+	return ((year >= 1) &&
+		(month >= 1) && (month <= 12) &&
+		(day >= 1) && (day <= daysIn(time.Month(month), year)))
+}
+
+func parseAsDate(text string) (*time.Time, error) {
+	submatches := rSimpleDate.FindStringSubmatch(text)
+
+	if submatches == nil {
+		return nil, nil
+	}
+
+	if len(submatches) != 4 {
+		return nil, fmt.Errorf("wrong number of submatches (got %v, should be 3)", len(submatches))
+	}
+
+	month, err := strconv.Atoi(submatches[1])
+	if err != nil {
+		return nil, err
+	}
+
+	day, err := strconv.Atoi(submatches[2])
+	if err != nil {
+		return nil, err
+	}
+
+	var year int
+	if len(submatches[3]) == 0 {
+		now := time.Now().In(constants.MinyanLocation())
+		if month > int(now.Month()) || ((month == int(now.Month())) && (day >= now.Day())) {
+			year = now.Year()
+		} else {
+			// For dates before today, assume we are talking about next year
+			year = now.Year() + 1
+		}
+	} else {
+		year, err = strconv.Atoi(submatches[3])
+		if err != nil {
+			return nil, err
+		}
+		if len(submatches[3]) == 2 {
+			year += 2000
+		}
+	}
+
+	if !isDateValid(year, month, day) {
+		return nil, fmt.Errorf("invalid date: {Year='%v', Month='%v', Day='%v'}", year, month, day)
+	}
+
+	return util.New(time.Date(year, time.Month(month), day,
+		0, 0, 0, 0,
+		constants.MinyanLocation())), nil
+}
+
+type TimesCommand struct {
+	date          time.Time
+	header        string
+	sephardic     bool
+	includePassed bool
+}
+
+func parseTimeCommand(text string) (*TimesCommand, error) {
+
+	var found bool
+	text, found = strings.CutPrefix(text, "!times")
+	if !found {
+		return nil, errors.New("text does not start with '!times'")
+	}
+
+	var isSephardic bool = false
+	isSephardic, text = util.RemoveAndCheckMatch(rSepharidic, text)
+
+	if len(text) == 0 {
+		// Plain "!times" command
+		return &TimesCommand{
+			date:          time.Now().In(constants.MinyanLocation()),
+			header:        "*Upcoming minyan times for today*",
+			sephardic:     isSephardic,
+			includePassed: false,
+		}, nil
+	}
+
+	if text == "today" {
+		return &TimesCommand{
+			date:          time.Now().In(constants.MinyanLocation()),
+			header:        "*Minyan times for today*",
+			sephardic:     isSephardic,
+			includePassed: true,
+		}, nil
+	}
+
+	if text == "tomorrow" {
+		return &TimesCommand{
+			date:          time.Now().In(constants.MinyanLocation()).AddDate(0, 0, 1),
+			header:        "*Minyan times for tomorrow*",
+			sephardic:     isSephardic,
+			includePassed: true,
+		}, nil
+	}
+
+	date, err := parseAsDate(text)
+	if err != nil {
+		return nil, err
+	}
+	if date != nil {
+		return &TimesCommand{
+			date:          *date,
+			header:        "*Minyan times for date:*",
+			sephardic:     isSephardic,
+			includePassed: true,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("extra text '%s'", text)
 }
 
 func (state *ProgramState) HandleMinyanMessage(v *events.Message) {
-	switch util.NormalizeString(v.Message.GetConversation()) {
+	inputText := util.NormalizeString(v.Message.GetConversation())
 
-	case "!times":
-		state.SendMinyanTimes(time.Now().Local(), "*Upcoming minyan times for today*", v.Info.Chat, true, false)
-	case "!times today":
-		state.SendMinyanTimes(time.Now().Local(), "*Minyan times for today*", v.Info.Chat, true, true)
-	case "!times tomorrow":
-		state.SendMinyanTimes(time.Now().Local().AddDate(0, 0, 1), "*Minyan times for tomorrow*", v.Info.Chat, true, true)
+	if strings.HasPrefix(inputText, "!times") {
+		command, err := parseTimeCommand(inputText)
+		if err != nil {
+			errorMessage := fmt.Sprintf("Error in HandleMinyanMessage: %q", err.Error())
+			fmt.Println(errorMessage)
+			state.QueueSimpleStringMessage(v.Info.Chat, "```Could not parse the command```")
+			state.QueueSimpleStringMessage(constants.ChatIDMe(), fmt.Sprintf("```%s```", errorMessage))
+
+			return
+		}
+
+		state.SendMinyanTimes(command, v.Info.Chat, true)
 	}
 }
