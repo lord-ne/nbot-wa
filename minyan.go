@@ -12,6 +12,7 @@ import (
 	"nbot-wa/constants"
 	"nbot-wa/util"
 
+	"github.com/go-co-op/gocron/v2"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/api/calendar/v3"
@@ -188,33 +189,37 @@ func (state *ProgramState) SendMinyanTimes(command *TimesCommand, chat types.JID
 }
 
 func (state *ProgramState) RegisterDailyEvents() {
-	// Send minyan times for today at 9:30
-	state.MinyanScheduler.Every(1).Day().At("09:30").Do(
-		func(scheduledTime time.Time) {
+	// Send minyan times for today at 9:30am
+	state.MinyanScheduler.NewJob(
+		gocron.DailyJob(1, gocron.NewAtTimes(gocron.NewAtTime(9, 30, 0))),
+		gocron.NewTask(func() {
 			state.SendMinyanTimes(
 				&TimesCommand{
-					date:          scheduledTime.In(constants.MinyanLocation()),
+					date:          time.Now().In(constants.MinyanLocation()),
 					header:        "*Upcoming minyan times for today*",
 					sephardic:     false,
 					includePassed: false,
 				},
 				constants.ChatIDMinyan(),
 				false)
-		})
+		}),
+	)
 
-	// Send minyan times for tomorrow
-	state.MinyanScheduler.Every(1).Day().At("20:30").Do(
-		func(scheduledTime time.Time) {
+	// Send minyan times for tomorrow at 8:30pm
+	state.MinyanScheduler.NewJob(
+		gocron.DailyJob(1, gocron.NewAtTimes(gocron.NewAtTime(20, 30, 0))),
+		gocron.NewTask(func() {
 			state.SendMinyanTimes(
 				&TimesCommand{
-					date:          scheduledTime.In(constants.MinyanLocation()).AddDate(0, 0, 1),
+					date:          time.Now().In(constants.MinyanLocation()).AddDate(0, 0, 1),
 					header:        "*Minyan times for tomorrow*",
 					sephardic:     false,
 					includePassed: true,
 				},
 				constants.ChatIDMinyan(),
 				false)
-		})
+		}),
+	)
 }
 
 // Copied from internal function in time package
@@ -292,8 +297,10 @@ func parseTimeCommand(text string) (*TimesCommand, error) {
 		return nil, errors.New("text does not start with '!times'")
 	}
 
+	text = strings.TrimSpace(text)
+
 	var isSephardic bool = false
-	isSephardic, text = util.RemoveAndCheckMatch(rSepharidic, text)
+	text, isSephardic = util.RemoveAndCheckMatch(rSepharidic, text)
 
 	if len(text) == 0 {
 		// Plain "!times" command

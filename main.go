@@ -12,7 +12,7 @@ import (
 	"nbot-wa/constants"
 	"nbot-wa/util"
 
-	"github.com/go-co-op/gocron"
+	"github.com/go-co-op/gocron/v2"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal/v3"
 	"google.golang.org/api/calendar/v3"
@@ -29,7 +29,7 @@ type ProgramState struct {
 	Client                *whatsmeow.Client
 	MessageQueue          chan MessageToSend
 	CalendarEventsService *calendar.EventsService
-	MinyanScheduler       *gocron.Scheduler
+	MinyanScheduler       gocron.Scheduler
 }
 
 func (state *ProgramState) HandleEvent(evt interface{}) {
@@ -81,11 +81,18 @@ func CreateAndSetupStandardProgramState() (*ProgramState, error) {
 	clientLog := waLog.Stdout("Client", "INFO", true)
 	client := whatsmeow.NewClient(deviceStore, clientLog)
 
+	scheduler, err := gocron.NewScheduler(
+		gocron.WithLocation(constants.MinyanLocation()),
+		gocron.WithLimitConcurrentJobs(1, gocron.LimitModeWait))
+	if err != nil {
+		return nil, err
+	}
+
 	programState := &ProgramState{
 		Client:                client,
 		MessageQueue:          make(chan MessageToSend, 1000),
 		CalendarEventsService: calendar.NewEventsService(calendarBaseService),
-		MinyanScheduler:       gocron.NewScheduler(constants.MinyanLocation()),
+		MinyanScheduler:       scheduler,
 	}
 
 	programState.SetupMessageQueue()
@@ -115,6 +122,8 @@ func CreateAndSetupStandardProgramState() (*ProgramState, error) {
 	}
 
 	programState.RegisterDailyEvents()
+
+	programState.MinyanScheduler.Start()
 
 	return programState, nil
 }

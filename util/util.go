@@ -89,7 +89,7 @@ func OrdinalSuffix(n int) string {
 	}
 }
 
-func RemoveAndCheckMatch(re *regexp.Regexp, str string) (bool, string) {
+func RemoveAndCheckMatch(re *regexp.Regexp, str string) (string, bool) {
 	found := false
 
 	newStr := re.ReplaceAllStringFunc(str, func(s string) string {
@@ -97,5 +97,5 @@ func RemoveAndCheckMatch(re *regexp.Regexp, str string) (bool, string) {
 		return ""
 	})
 
-	return found, newStr
+	return newStr, found
 }
