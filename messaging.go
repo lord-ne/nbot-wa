@@ -12,14 +12,14 @@ import (
 )
 
 type MessageToSend struct {
-	Chat types.JID
+	Chat    types.JID
 	Message *waE2E.Message
 }
 
 func (state *ProgramState) QueueMessage(chat types.JID, message *waE2E.Message) {
 	fmt.Printf("Message queued in chat '%v' {%v}\n", chat.String(), message.String())
 	state.MessageQueue <- MessageToSend{
-		Chat: chat,
+		Chat:    chat,
 		Message: message,
 	}
 }
@@ -31,7 +31,7 @@ func (state *ProgramState) QueueSimpleStringMessage(chat types.JID, message stri
 }
 
 func (state *ProgramState) SetupMessageQueue() {
-	go func () {
+	go func() {
 		for msg := range state.MessageQueue {
 			delayTime := util.AsMilliseconds(util.RandBetween(500, 1000))
 			time.Sleep(delayTime)
@@ -39,7 +39,7 @@ func (state *ProgramState) SetupMessageQueue() {
 			typeTime := util.AsMilliseconds(util.RandBetween(1000, 2000))
 			state.Client.SendChatPresence(msg.Chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
 			time.Sleep(typeTime)
-		
+
 			state.Client.SendMessage(context.Background(), msg.Chat, msg.Message)
 
 			// We won't process any more messages for at least 4 seconds

@@ -45,8 +45,8 @@ func parseEventDateTime(t *calendar.EventDateTime) (time.Time, error) {
 }
 
 type ParsedEvent struct {
-	Name string;
-	DateTime time.Time;
+	Name     string
+	DateTime time.Time
 }
 
 func parseEvents(events []*calendar.Event) ([]ParsedEvent, error) {
@@ -59,12 +59,12 @@ func parseEvents(events []*calendar.Event) ([]ParsedEvent, error) {
 		}
 
 		parsedEvents = append(parsedEvents, ParsedEvent{
-			Name: event.Summary,
+			Name:     event.Summary,
 			DateTime: t,
 		})
 	}
 
-	slices.SortFunc(parsedEvents, func (a, b ParsedEvent) int {
+	slices.SortFunc(parsedEvents, func(a, b ParsedEvent) int {
 		if a.DateTime.Before(b.DateTime) {
 			return -1
 		} else if b.DateTime.Before(a.DateTime) {
@@ -73,14 +73,14 @@ func parseEvents(events []*calendar.Event) ([]ParsedEvent, error) {
 			return 0
 		}
 	})
-	
+
 	return parsedEvents, nil
 }
 
 func formatMinyanMessage(parsedEvents []ParsedEvent) (string, error) {
-    var builder strings.Builder
+	var builder strings.Builder
 
-	if (len(parsedEvents) <= 0) {
+	if len(parsedEvents) <= 0 {
 		return "(no times to show)", nil
 	}
 
@@ -121,19 +121,19 @@ func (state *ProgramState) GetMinyanMessageForDate(date time.Time, includePassed
 	}
 
 	cutoff := time.Now().In(constants.MinyanLocation()).Add(-5 * time.Minute)
-	if (!includePassed) {
+	if !includePassed {
 		parsedEvents = util.Filter(parsedEvents, func(event ParsedEvent) bool {
 			return event.DateTime.After(cutoff)
 		})
 	}
-	
+
 	return formatMinyanMessage(parsedEvents)
 }
 
 func (state *ProgramState) SendMinyanTimes(date time.Time, header string, chat types.JID, shouldSendOnError bool, includePassed bool) {
 	messageBody, err := state.GetMinyanMessageForDate(date, includePassed)
 
-	if (err != nil) {
+	if err != nil {
 		errorMessage := fmt.Sprintf("Error in HandleMinyanMessage: %v", err)
 		fmt.Println(errorMessage)
 		state.QueueSimpleStringMessage(constants.ChatIDMe(), errorMessage)
@@ -141,12 +141,12 @@ func (state *ProgramState) SendMinyanTimes(date time.Time, header string, chat t
 		if shouldSendOnError {
 			message := fmt.Sprintf("```There was an error retrieving the minyan times. Contact %s if the problem persists.```",
 				constants.MaintainerName)
-			
+
 			state.QueueSimpleStringMessage(chat, message)
 		}
 		return
 	}
-	
+
 	message := fmt.Sprintf("%s\n%s\n%s",
 		header,
 		date.Format("Monday, January 02"),
@@ -159,7 +159,7 @@ func (state *ProgramState) RegisterDailyEvents() {
 	// Send minyan times for today at 9:30
 	state.DailyEventRunner.AddEvent(&daily.Event{
 		TimeToRun: daily.TimeOfDay{
-			Hours: 9,
+			Hours:   9,
 			Minutes: 30,
 		},
 		CallbackFunc: func(scheduledTime time.Time) {
@@ -175,7 +175,7 @@ func (state *ProgramState) RegisterDailyEvents() {
 	// Send minyan times for tomorrow
 	state.DailyEventRunner.AddEvent(&daily.Event{
 		TimeToRun: daily.TimeOfDay{
-			Hours: 20,
+			Hours:   20,
 			Minutes: 30,
 		},
 		CallbackFunc: func(scheduledTime time.Time) {
@@ -191,7 +191,7 @@ func (state *ProgramState) RegisterDailyEvents() {
 
 func (state *ProgramState) HandleMinyanMessage(v *events.Message) {
 	switch util.NormalizeString(v.Message.GetConversation()) {
-	
+
 	case "!times":
 		state.SendMinyanTimes(time.Now().Local(), "*Upcoming minyan times for today*", v.Info.Chat, true, false)
 	case "!times today":

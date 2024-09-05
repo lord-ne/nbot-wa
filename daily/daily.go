@@ -8,7 +8,7 @@ import (
 )
 
 type TimeOfDay struct {
-	Hours uint8
+	Hours   uint8
 	Minutes uint8
 }
 
@@ -21,15 +21,16 @@ func AsTimeOfDay(t time.Time) TimeOfDay {
 }
 
 type Event struct {
-	TimeToRun TimeOfDay
+	TimeToRun    TimeOfDay
 	CallbackFunc func(scheduledTime time.Time)
-	RunOnce bool
+	RunOnce      bool
 }
 
 type DailyRunner struct {
-	ticker *time.Ticker
-	events []*Event
+	ticker   *time.Ticker
+	events   []*Event
 	interval time.Duration
+	location *time.Location
 	lastTick time.Time
 }
 
@@ -53,13 +54,13 @@ func closestRun(timeToRun TimeOfDay, currTime time.Time) time.Time {
 
 func isReadyToRun(closestRunTime time.Time, currTime time.Time, interval time.Duration) bool {
 	// Only run if we are within 2 intervals of when the event should have gone off
-	return !closestRunTime.After(currTime) && (currTime.Sub(closestRunTime) <= interval * 2)
+	return !closestRunTime.After(currTime) && (currTime.Sub(closestRunTime) <= interval*2)
 }
 
 func (runner *DailyRunner) waitForTicks() {
 
 	for currTick := range runner.ticker.C {
-		currTick = currTick.Local()
+		currTick = currTick.In(runner.location)
 
 		lastTick := runner.lastTick
 		runner.lastTick = currTick
@@ -86,11 +87,12 @@ func (runner *DailyRunner) waitForTicks() {
 	}
 }
 
-func MakeDailyRunner(interval time.Duration) *DailyRunner {
+func MakeDailyRunner(interval time.Duration, location *time.Location) *DailyRunner {
 	runner := &DailyRunner{
-		ticker: time.NewTicker(interval),
+		ticker:   time.NewTicker(interval),
 		interval: interval,
-		events: []*Event{},
+		events:   []*Event{},
+		location: location,
 		lastTick: time.Time{},
 	}
 

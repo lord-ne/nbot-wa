@@ -26,10 +26,10 @@ import (
 )
 
 type ProgramState struct {
-	Client *whatsmeow.Client
-	MessageQueue chan MessageToSend
+	Client                *whatsmeow.Client
+	MessageQueue          chan MessageToSend
 	CalendarEventsService *calendar.EventsService
-	DailyEventRunner *daily.DailyRunner
+	DailyEventRunner      *daily.DailyRunner
 }
 
 func (state *ProgramState) HandleEvent(evt interface{}) {
@@ -38,14 +38,14 @@ func (state *ProgramState) HandleEvent(evt interface{}) {
 		fmt.Printf("Received message in '%v'\n", v.Info.Chat.String())
 
 		if slices.Contains(constants.ChatIDsToRead(), v.Info.Chat) {
-			state.Client.MarkRead([]string{ v.Info.ID }, time.Now(), v.Info.Chat, v.Info.Sender, types.ReceiptTypeRead)
+			state.Client.MarkRead([]string{v.Info.ID}, time.Now(), v.Info.Chat, v.Info.Sender, types.ReceiptTypeRead)
 		}
 
 		if (v.Info.Chat == constants.ChatIDMe()) || (v.Info.Chat == constants.ChatIDBotTest()) {
 			state.HandleDebugMessage(v)
 		}
 
-		if (v.Info.Chat == constants.ChatIDMinyan()) {
+		if v.Info.Chat == constants.ChatIDMinyan() {
 			state.HandleMinyanMessage(v)
 		}
 	}
@@ -78,10 +78,10 @@ func CreateAndSetupStandardProgramState() (*ProgramState, error) {
 	client := whatsmeow.NewClient(deviceStore, clientLog)
 
 	programState := &ProgramState{
-		Client: client,
-		MessageQueue: make(chan MessageToSend, 1000),
+		Client:                client,
+		MessageQueue:          make(chan MessageToSend, 1000),
 		CalendarEventsService: calendar.NewEventsService(calendarBaseService),
-		DailyEventRunner: daily.MakeDailyRunner(5 * time.Minute),
+		DailyEventRunner:      daily.MakeDailyRunner(1*time.Minute, constants.MinyanLocation()),
 	}
 
 	programState.SetupMessageQueue()
