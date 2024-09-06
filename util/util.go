@@ -19,6 +19,12 @@ func PanicIfError[T any](value T, err error) T {
 	return value
 }
 
+func PanicIfNil[T any](value *T) *T {
+	if value == nil {
+		panic("value was nil")
+	}
+	return value
+}
 func NormalizeString(s string) string {
 	return rSpaces.ReplaceAllLiteralString(strings.TrimSpace(strings.ToLower(s)), " ")
 }

@@ -7,6 +7,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.4 // indirect
 	cloud.google.com/go/compute/metadata v0.5.0 // indirect
 	filippo.io/edwards25519 v1.1.0 // indirect
+	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-co-op/gocron v1.37.0 // indirect
 	github.com/go-co-op/gocron/v2 v2.11.0 // indirect
@@ -18,11 +19,16 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/googleapis/gax-go/v2 v2.13.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
+	github.com/hebcal/gematriya v1.0.1 // indirect
+	github.com/hebcal/greg v1.0.0 // indirect
+	github.com/hebcal/hdate v1.1.0 // indirect
+	github.com/hebcal/hebcal-go v0.9.31 // indirect
 	github.com/jonboulle/clockwork v0.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/mdp/qrterminal/v3 v3.2.0 // indirect
+	github.com/nathan-osman/go-sunrise v1.1.0 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rs/zerolog v1.33.0 // indirect
 	go.mau.fi/libsignal v0.1.1 // indirect

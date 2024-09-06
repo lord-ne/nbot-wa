@@ -173,14 +173,10 @@ func (state *ProgramState) SendMinyanTimes(command *TimesCommand, chat types.JID
 	message, err := state.GetMinyanMessage(command)
 
 	if err != nil {
-		errorMessage := fmt.Sprintf("Error in HandleMinyanMessage: %q", err.Error())
-		fmt.Println(errorMessage)
-
 		if shouldSendOnError {
 			state.QueueSimpleStringMessage(chat, "```There was an error retrieving the minyan times```")
 		}
-
-		state.QueueSimpleStringMessage(constants.ChatIDMe(), fmt.Sprintf("```%s```", errorMessage))
+		state.ReportErrorToMe(err, "HandleMinyanMessage")
 
 		return
 	}
@@ -193,9 +189,23 @@ func (state *ProgramState) RegisterDailyEvents() {
 	state.MinyanScheduler.NewJob(
 		gocron.DailyJob(1, gocron.NewAtTimes(gocron.NewAtTime(9, 30, 0))),
 		gocron.NewTask(func() {
+			now := time.Now().In(constants.MinyanLocation())
+
+			_, isYomTov, err := CurrentOrUpcomingYomTov(now)
+
+			if err != nil {
+				state.ReportErrorToMe(err, "CurrentOrUpcomingYomTov")
+				return
+			}
+
+			if isYomTov {
+				fmt.Println("Scheduled event did not run since issur melacha is in effect", now)
+				return
+			}
+
 			state.SendMinyanTimes(
 				&TimesCommand{
-					date:          time.Now().In(constants.MinyanLocation()),
+					date:          now,
 					header:        "*Upcoming minyan times for today*",
 					sephardic:     false,
 					includePassed: false,
@@ -209,9 +219,23 @@ func (state *ProgramState) RegisterDailyEvents() {
 	state.MinyanScheduler.NewJob(
 		gocron.DailyJob(1, gocron.NewAtTimes(gocron.NewAtTime(20, 30, 0))),
 		gocron.NewTask(func() {
+			now := time.Now().In(constants.MinyanLocation())
+
+			_, isYomTov, err := CurrentOrUpcomingYomTov(now)
+
+			if err != nil {
+				state.ReportErrorToMe(err, "CurrentOrUpcomingYomTov")
+				return
+			}
+
+			if isYomTov {
+				fmt.Println("Scheduled event did not run since issur melacha is in effect", now)
+				return
+			}
+
 			state.SendMinyanTimes(
 				&TimesCommand{
-					date:          time.Now().In(constants.MinyanLocation()).AddDate(0, 0, 1),
+					date:          now.AddDate(0, 0, 1),
 					header:        "*Minyan times for tomorrow*",
 					sephardic:     false,
 					includePassed: true,
@@ -352,10 +376,8 @@ func (state *ProgramState) HandleMinyanMessage(v *events.Message) {
 	if strings.HasPrefix(inputText, "!times") {
 		command, err := parseTimeCommand(inputText)
 		if err != nil {
-			errorMessage := fmt.Sprintf("Error in HandleMinyanMessage: %q", err.Error())
-			fmt.Println(errorMessage)
 			state.QueueSimpleStringMessage(v.Info.Chat, "```Could not parse the command```")
-			state.QueueSimpleStringMessage(constants.ChatIDMe(), fmt.Sprintf("```%s```", errorMessage))
+			state.ReportErrorToMe(err, "HandleMinyanMessage")
 
 			return
 		}

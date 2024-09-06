@@ -128,8 +128,13 @@ func CreateAndSetupStandardProgramState() (*ProgramState, error) {
 	return programState, nil
 }
 
-func main() {
+func (state *ProgramState) ReportErrorToMe(err error, errorLocation string) {
+	errorMessage := fmt.Sprintf("Error in %s: '%s'", errorLocation, err.Error())
+	fmt.Println(errorMessage)
+	state.QueueSimpleStringMessage(constants.ChatIDMe(), fmt.Sprintf("```%s```", errorMessage))
+}
 
+func main() {
 	programState := util.PanicIfError(CreateAndSetupStandardProgramState())
 
 	time.Sleep(5 * time.Second)
@@ -142,5 +147,4 @@ func main() {
 	<-c
 
 	programState.Client.Disconnect()
-
 }
