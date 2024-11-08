@@ -244,6 +244,17 @@ func (state *ProgramState) RegisterDailyEvents() {
 				false)
 		}),
 	)
+
+	// Send a message every week (Sunday at noon) reminding me to log in to the bot account on my
+	// phone so that the linked device doesn't expire.
+	// This should really be in another file, but the scheduler is here so it's easier
+	state.MinyanScheduler.NewJob(
+		gocron.WeeklyJob(1, gocron.NewWeekdays(time.Sunday), gocron.NewAtTimes(gocron.NewAtTime(12, 0, 0))),
+		gocron.NewTask(func() {
+			state.QueueSimpleStringMessage(constants.ChatIDMe(),
+				"*Reminder*: Please log in to the bot account to prevent the linked device from expiring")
+		}),
+	)
 }
 
 // Copied from internal function in time package
