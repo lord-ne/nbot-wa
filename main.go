@@ -60,20 +60,22 @@ func (state *ProgramState) SetupEventHandler() {
 }
 
 func CreateAndSetupStandardProgramState() (*ProgramState, error) {
+	ctx := context.Background()
+
 	calendarBaseService := util.PanicIfError(calendar.NewService(
-		context.Background(),
+		ctx,
 		option.WithAPIKey(constants.GoogleCalendarAPIKey)),
 	)
 
 	dbLog := waLog.Stdout("Database", "DEBUG", true)
 	// Make sure you add appropriate DB connector imports, e.g. github.com/mattn/go-sqlite3 for SQLite as we did in this minimal working example
-	container, err := sqlstore.New("sqlite3", "file:secrets/wastore.db?_foreign_keys=on", dbLog)
+	container, err := sqlstore.New(ctx, "sqlite3", "file:secrets/wastore.db?_foreign_keys=on", dbLog)
 	if err != nil {
 		return nil, err
 	}
 
 	// If you want multiple sessions, remember their JIDs and use .GetDevice(jid) or .GetAllDevices() instead.
-	deviceStore, err := container.GetFirstDevice()
+	deviceStore, err := container.GetFirstDevice(ctx)
 	if err != nil {
 		return nil, err
 	}

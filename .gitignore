@@ -1,3 +1,4 @@
 /.vscode/
 /secrets/*
 !/secrets/*.example
+/nbot-wa
