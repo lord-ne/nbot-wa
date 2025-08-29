@@ -18,11 +18,7 @@ import (
 	"google.golang.org/api/calendar/v3"
 )
 
-var (
-	rSepharidic = regexp.MustCompile(`(?ims)^\s*se?(?:(?:f)|(?:ph))ara?dic?\s*(?:(?:\s)|(?:$))`)
-
-	rSimpleDate = regexp.MustCompile(`(?ims)^\s*(\d{1,2})/(\d{1,2})(?:/((?:\d{2})?\d{2}))?\s*$`)
-)
+var rSepharidic = regexp.MustCompile(`(?ims)^\s*se?(?:(?:f)|(?:ph))ara?dic?\s*(?:(?:\s)|(?:$))`)
 
 func parseEventDateTime(t *calendar.EventDateTime) (time.Time, error) {
 	var rtnTime time.Time
@@ -257,22 +253,60 @@ func (state *ProgramState) RegisterDailyEvents() {
 	)
 }
 
+type ParsedDate struct {
+	year  int
+	month int
+	day   int
+}
+
 // Copied from internal function in time package
 func daysIn(m time.Month, year int) int {
 	return time.Date(year, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
-func isDateValid(year int, month int, day int) bool {
-	return ((year >= 1) &&
-		(month >= 1) && (month <= 12) &&
-		(day >= 1) && (day <= daysIn(time.Month(month), year)))
+func isDateValid(d *ParsedDate) bool {
+	return ((d.year >= 1) &&
+		(d.month >= 1) && (d.month <= 12) &&
+		(d.day >= 1) && (d.day <= daysIn(time.Month(d.month), d.year)))
 }
 
-func parseAsDate(text string) (*time.Time, error) {
+func tryParseAsDate(text string) (*time.Time, error) {
+	var d *ParsedDate = nil
+	var err error = nil
+
+	parserFuncs := [](func(text string) (*ParsedDate, error)){helperParseSimpleDate}
+	for _, f := range parserFuncs {
+		d, err = f(text)
+
+		if err != nil {
+			return nil, err
+		}
+
+		if d != nil {
+			break
+		}
+	}
+
+	if d == nil {
+		return nil, nil // No match, return nil
+	}
+
+	if !isDateValid(d) {
+		return nil, fmt.Errorf("invalid date: %q (parsed from %q)", d, text)
+	}
+
+	return util.New(time.Date(d.year, time.Month(d.month), d.day,
+		0, 0, 0, 0,
+		constants.MinyanLocation())), nil
+}
+
+var rSimpleDate = regexp.MustCompile(`(?ims)^\s*(\d{1,2})/(\d{1,2})(?:/((?:\d{2})?\d{2}))?\s*$`)
+
+func helperParseSimpleDate(text string) (*ParsedDate, error) {
 	submatches := rSimpleDate.FindStringSubmatch(text)
 
 	if submatches == nil {
-		return nil, nil
+		return nil, nil // No match, return nil
 	}
 
 	if len(submatches) != 4 {
@@ -308,13 +342,10 @@ func parseAsDate(text string) (*time.Time, error) {
 		}
 	}
 
-	if !isDateValid(year, month, day) {
-		return nil, fmt.Errorf("invalid date: {Year='%v', Month='%v', Day='%v'}", year, month, day)
-	}
-
-	return util.New(time.Date(year, time.Month(month), day,
-		0, 0, 0, 0,
-		constants.MinyanLocation())), nil
+	return &ParsedDate{
+		year:  year,
+		month: month,
+		day:   day}, nil
 }
 
 type TimesCommand struct {
@@ -365,7 +396,7 @@ func parseTimeCommand(text string) (*TimesCommand, error) {
 		}, nil
 	}
 
-	date, err := parseAsDate(text)
+	date, err := tryParseAsDate(text)
 	if err != nil {
 		return nil, err
 	}
