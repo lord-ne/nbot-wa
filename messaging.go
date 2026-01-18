@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"nbot-wa/util"
 	"time"
@@ -37,10 +36,10 @@ func (state *ProgramState) SetupMessageQueue() {
 			time.Sleep(delayTime)
 
 			typeTime := util.AsMilliseconds(util.RandBetween(1000, 2000))
-			state.Client.SendChatPresence(msg.Chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
+			state.Client.SendChatPresence(state.Ctx, msg.Chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
 			time.Sleep(typeTime)
 
-			state.Client.SendMessage(context.Background(), msg.Chat, msg.Message)
+			state.Client.SendMessage(state.Ctx, msg.Chat, msg.Message)
 
 			// We won't process any more messages for at least 4 seconds
 			rateLimitTime := util.AsMilliseconds(util.RandBetween(4000, 5000))

@@ -30,6 +30,7 @@ type ProgramState struct {
 	MessageQueue          chan MessageToSend
 	CalendarEventsService *calendar.EventsService
 	MinyanScheduler       gocron.Scheduler
+	Ctx                   context.Context
 }
 
 func (state *ProgramState) HandleEvent(evt interface{}) {
@@ -42,7 +43,7 @@ func (state *ProgramState) HandleEvent(evt interface{}) {
 		}
 
 		if !v.Info.IsGroup || slices.Contains(constants.ChatIDsToRead(), v.Info.Chat) {
-			state.Client.MarkRead([]string{v.Info.ID}, time.Now(), v.Info.Chat, v.Info.Sender, types.ReceiptTypeRead)
+			state.Client.MarkRead(state.Ctx, []string{v.Info.ID}, time.Now(), v.Info.Chat, v.Info.Sender, types.ReceiptTypeRead)
 		}
 
 		if (v.Info.Chat == constants.ChatIDMe()) || (v.Info.Chat == constants.ChatIDBotTest()) {
@@ -95,6 +96,7 @@ func CreateAndSetupStandardProgramState() (*ProgramState, error) {
 		MessageQueue:          make(chan MessageToSend, 1000),
 		CalendarEventsService: calendar.NewEventsService(calendarBaseService),
 		MinyanScheduler:       scheduler,
+		Ctx:                   ctx,
 	}
 
 	programState.SetupMessageQueue()
@@ -111,12 +113,12 @@ func CreateAndSetupStandardProgramState() (*ProgramState, error) {
 			if evt.Event == "code" {
 				// Render the QR code here
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-                                pairingCode, err := client.PairPhone(context.Background(), constants.BotPhoneNumber, true, whatsmeow.PairClientFirefox, "Firefox (Linux)")
-                                if err != nil {
-                                    fmt.Println("Error generating pairing code: %v", err)
-                                }  else {
-                                    fmt.Println("Generated pairing code: %v", pairingCode)
-                                }
+				pairingCode, err := client.PairPhone(context.Background(), constants.BotPhoneNumber, true, whatsmeow.PairClientFirefox, "Firefox (Linux)")
+				if err != nil {
+					fmt.Println("Error generating pairing code: %v", err)
+				} else {
+					fmt.Println("Generated pairing code: %v", pairingCode)
+				}
 			} else {
 				fmt.Println("Login event:", evt.Event)
 			}
