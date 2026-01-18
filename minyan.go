@@ -63,7 +63,7 @@ func parseEvents(events []*calendar.Event) ([]ParsedEvent, error) {
 		}
 
 		parsedEvents = append(parsedEvents, ParsedEvent{
-			Name:     event.Summary,
+			Name:     strings.TrimSpace(event.Summary),
 			DateTime: t,
 		})
 	}
