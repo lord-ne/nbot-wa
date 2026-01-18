@@ -111,6 +111,12 @@ func CreateAndSetupStandardProgramState() (*ProgramState, error) {
 			if evt.Event == "code" {
 				// Render the QR code here
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
+                                pairingCode, err := client.PairPhone(context.Background(), constants.BotPhoneNumber, true, whatsmeow.PairClientFirefox, "Firefox (Linux)")
+                                if err != nil {
+                                    fmt.Println("Error generating pairing code: %v", err)
+                                }  else {
+                                    fmt.Println("Generated pairing code: %v", pairingCode)
+                                }
 			} else {
 				fmt.Println("Login event:", evt.Event)
 			}

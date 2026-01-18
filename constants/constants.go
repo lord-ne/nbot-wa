@@ -33,4 +33,5 @@ const (
 	GoogleCalendarAPIKey = secrets.GoogleCalendarAPIKey
 
 	MaintainerName = secrets.MaintainerName
+        BotPhoneNumber = secrets.BotPhoneNumber
 )
