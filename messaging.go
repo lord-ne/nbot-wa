@@ -24,6 +24,10 @@ func (state *ProgramState) QueueMessage(chat types.JID, message *waE2E.Message) 
 }
 
 func (state *ProgramState) QueueSimpleStringMessage(chat types.JID, message string) {
+	if len(message) > 10000 {
+		errorMessage := "\n\n_...trunacated to 10,000 characters_"
+		message = message[:10000-len(errorMessage)]
+	}
 	state.QueueMessage(chat, &waE2E.Message{
 		Conversation: proto.String(message),
 	})

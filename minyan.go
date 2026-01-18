@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"iter"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 	"nbot-wa/constants"
 	"nbot-wa/util"
 
+	"github.com/dlclark/regexp2"
 	"github.com/go-co-op/gocron/v2"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -81,36 +84,69 @@ func parseEvents(events []*calendar.Event) ([]ParsedEvent, error) {
 	return parsedEvents, nil
 }
 
+func formatMinyanEventDate(builder *strings.Builder, date time.Time) {
+	builder.WriteString(date.Format("Monday, January 2"))
+	builder.WriteString(util.OrdinalSuffix(date.Day()))
+
+	if date.Year() != time.Now().In(date.Location()).Year() {
+		// Add year if different from current
+		builder.WriteRune(' ')
+		builder.WriteString(date.Format("2006"))
+	}
+}
+
+func areSameDate(d1 time.Time, d2 time.Time) bool {
+	d1 = d1.In(constants.MinyanLocation())
+	d2 = d2.In(constants.MinyanLocation())
+
+	return (d1.Year() == d2.Year()) && (d1.Month() == d2.Month()) && (d1.Day() == d2.Day())
+
+}
+
 func formatMinyanMessage(command *TimesCommand, parsedEvents []ParsedEvent) (string, error) {
 	var builder strings.Builder
 
+	singleDayRequested := areSameDate(command.dtStart, command.dtEnd)
+
+	builder.WriteRune('*')
 	builder.WriteString(command.header)
-	builder.WriteRune('\n')
-	builder.WriteString(command.date.Format("Monday, January 2"))
-	builder.WriteString(util.OrdinalSuffix(command.date.Day()))
+	builder.WriteString(":*")
+	if len(parsedEvents) == 0 {
+		if singleDayRequested {
+			// If we are outputting times for a single day, show the date even when there are no times to show
+			builder.WriteRune('\n')
+			formatMinyanEventDate(&builder, command.dtStart)
+		}
 
-	if command.date.Year() != time.Now().In(constants.MinyanLocation()).Year() {
-		// Add year if different from current
-		builder.WriteRune(' ')
-		builder.WriteString(command.date.Format("2006"))
-	}
-
-	builder.WriteRune('\n')
-
-	if len(parsedEvents) <= 0 {
 		builder.WriteString("\n(no times to show)")
 	} else {
+		singleDayReturned := areSameDate(parsedEvents[0].DateTime, parsedEvents[len(parsedEvents)-1].DateTime)
+		prevDate := time.Time{}
+		first := true
 		for _, event := range parsedEvents {
-			timeString := event.DateTime.In(constants.MinyanLocation()).Format(time.Kitchen)
+			eventDateTime := event.DateTime.In(constants.MinyanLocation())
+
+			currDate := startOfDate(eventDateTime)
+			if first || currDate != prevDate {
+				// If we have gone onto a new day, print it
+				builder.WriteRune('\n')
+				if !singleDayReturned || !first {
+					// Blank line between dates, and before the first if we returned multiple
+					builder.WriteRune('\n')
+				}
+				formatMinyanEventDate(&builder, currDate)
+				prevDate = currDate
+				first = false
+			}
+
+			timeString := eventDateTime.Format(time.Kitchen)
 			// Narrow non-breaking space followed by small-caps AM/PM
 			timeString = strings.Replace(timeString, "AM", "\u202F\u1D00\u1D0D", 1)
 			timeString = strings.Replace(timeString, "PM", "\u202F\u1D18\u1D0D", 1)
 
-			builder.WriteString(fmt.Sprintf(
-				"\n*%v*: %v",
+			fmt.Fprintf(&builder, "\n- *%v*: %v",
 				event.Name,
-				timeString,
-			))
+				timeString)
 		}
 	}
 
@@ -130,22 +166,28 @@ func formatMinyanMessage(command *TimesCommand, parsedEvents []ParsedEvent) (str
 	return message, nil
 }
 
-func (state *ProgramState) GetMinyanEventsForDate(date time.Time) (*calendar.Events, error) {
+func datetimeRangeForDay(date time.Time) (time.Time, time.Time) {
 	dateLoc := date.In(constants.MinyanLocation())
-
 	todayMidnight := time.Date(dateLoc.Year(), dateLoc.Month(), dateLoc.Day(), 0, 0, 0, 0, dateLoc.Location())
-	tomorrowMidnight := todayMidnight.AddDate(0, 0, 1)
+	tomorrowMidnight := todayMidnight.AddDate(0, 0, 1).Add(-1 * time.Second)
+	return todayMidnight, tomorrowMidnight
+}
 
+func plusOneWeek(date time.Time) time.Time {
+	return date.AddDate(0, 0, 7).Add(-1 * time.Second)
+}
+
+func (state *ProgramState) GetMinyanEventsForDate(dtStart time.Time, dtEnd time.Time) (*calendar.Events, error) {
 	return state.CalendarEventsService.List(constants.MinyanCalendarID).
 		SingleEvents(true).
 		TimeZone("America/New_York").
-		TimeMin(todayMidnight.Format(time.RFC3339)).
-		TimeMax(tomorrowMidnight.Format(time.RFC3339)).
+		TimeMin(dtStart.Format(time.RFC3339)).
+		TimeMax(dtEnd.Format(time.RFC3339)).
 		Do()
 }
 
 func (state *ProgramState) GetMinyanMessage(command *TimesCommand) (string, error) {
-	events, err := state.GetMinyanEventsForDate(command.date)
+	events, err := state.GetMinyanEventsForDate(command.dtStart, command.dtEnd)
 	if err != nil {
 		return "", err
 	}
@@ -200,12 +242,7 @@ func (state *ProgramState) RegisterDailyEvents() {
 			}
 
 			state.SendMinyanTimes(
-				&TimesCommand{
-					date:          now,
-					header:        "*Upcoming minyan times for today*",
-					sephardic:     false,
-					includePassed: false,
-				},
+				upcomingMinyanTimesCommand(false),
 				constants.ChatIDMinyan(),
 				false)
 		}),
@@ -230,12 +267,7 @@ func (state *ProgramState) RegisterDailyEvents() {
 			}
 
 			state.SendMinyanTimes(
-				&TimesCommand{
-					date:          now.AddDate(0, 0, 1),
-					header:        "*Minyan times for tomorrow*",
-					sephardic:     false,
-					includePassed: true,
-				},
+				upcomingMinyanTimesCommand(false),
 				constants.ChatIDMinyan(),
 				false)
 		}),
@@ -253,10 +285,12 @@ func (state *ProgramState) RegisterDailyEvents() {
 	)
 }
 
-type ParsedDate struct {
-	year  int
-	month int
-	day   int
+func startOfDate(d time.Time) time.Time {
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, d.Location())
+}
+
+func endOfDate(d time.Time) time.Time {
+	return time.Date(d.Year(), d.Month(), d.Day(), 23, 59, 59, 0, d.Location())
 }
 
 // Copied from internal function in time package
@@ -264,95 +298,291 @@ func daysIn(m time.Month, year int) int {
 	return time.Date(year, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
-func isDateValid(d *ParsedDate) bool {
-	return ((d.year >= 1) &&
-		(d.month >= 1) && (d.month <= 12) &&
-		(d.day >= 1) && (d.day <= daysIn(time.Month(d.month), d.year)))
+func isDateValid(year int, month int, day int) bool {
+	return ((year >= 1) &&
+		(month >= 1) && (month <= 12) &&
+		(day >= 1) && (day <= daysIn(time.Month(month), year)))
 }
 
-func tryParseAsDate(text string) (*time.Time, error) {
-	var d *ParsedDate = nil
-	var err error = nil
-
-	parserFuncs := [](func(text string) (*ParsedDate, error)){helperParseSimpleDate}
-	for _, f := range parserFuncs {
-		d, err = f(text)
-
-		if err != nil {
-			return nil, err
-		}
-
-		if d != nil {
-			break
-		}
+func tryMakeDate(year int, month int, day int) (time.Time, error) {
+	if !isDateValid(year, month, day) {
+		return time.Time{}, fmt.Errorf("invalid date: %d/%d/%d", month, day, year)
 	}
 
-	if d == nil {
-		return nil, nil // No match, return nil
-	}
-
-	if !isDateValid(d) {
-		return nil, fmt.Errorf("invalid date: %q (parsed from %q)", d, text)
-	}
-
-	return util.New(time.Date(d.year, time.Month(d.month), d.day,
+	return time.Date(year, time.Month(month), day,
 		0, 0, 0, 0,
-		constants.MinyanLocation())), nil
+		constants.MinyanLocation()), nil
 }
 
-var rSimpleDate = regexp.MustCompile(`(?ims)^\s*(\d{1,2})/(\d{1,2})(?:/((?:\d{2})?\d{2}))?\s*$`)
-
-func helperParseSimpleDate(text string) (*ParsedDate, error) {
-	submatches := rSimpleDate.FindStringSubmatch(text)
-
-	if submatches == nil {
-		return nil, nil // No match, return nil
+func nextOccurenceYear(basedate time.Time, month int, day int) int {
+	year := basedate.Year()
+	if month < int(basedate.Month()) || ((month == int(basedate.Month())) && (day < basedate.Day())) {
+		// For dates before today, assume we are talking about next year
+		year += 1
 	}
 
-	if len(submatches) != 4 {
-		return nil, fmt.Errorf("wrong number of submatches (got %v, should be 3)", len(submatches))
-	}
+	return year
+}
 
-	month, err := strconv.Atoi(submatches[1])
-	if err != nil {
-		return nil, err
-	}
+var dayOfWeekMap = map[string]time.Weekday{
+	"sun":       time.Sunday,
+	"sunday":    time.Sunday,
+	"mon":       time.Monday,
+	"monday":    time.Monday,
+	"tue":       time.Tuesday,
+	"tues":      time.Tuesday,
+	"tuesday":   time.Tuesday,
+	"wed":       time.Wednesday,
+	"wednesday": time.Wednesday,
+	"thu":       time.Thursday,
+	"thurs":     time.Thursday,
+	"thursday":  time.Thursday,
+	"fri":       time.Friday,
+	"friday":    time.Friday,
+	"sat":       time.Saturday,
+	"saturday":  time.Saturday,
+	"shab":      time.Saturday,
+	"shabbat":   time.Saturday,
+	"shabbos":   time.Saturday,
+}
 
-	day, err := strconv.Atoi(submatches[2])
-	if err != nil {
-		return nil, err
-	}
+var monthMap = map[string]time.Month{
+	"jan":       time.January,
+	"january":   time.January,
+	"feb":       time.February,
+	"february":  time.February,
+	"mar":       time.March,
+	"march":     time.March,
+	"apr":       time.April,
+	"april":     time.April,
+	"may":       time.May,
+	"jun":       time.June,
+	"june":      time.June,
+	"jul":       time.July,
+	"july":      time.July,
+	"aug":       time.August,
+	"august":    time.August,
+	"sep":       time.September,
+	"september": time.September,
+	"oct":       time.October,
+	"october":   time.October,
+	"nov":       time.November,
+	"november":  time.November,
+	"dec":       time.December,
+	"december":  time.December,
+}
 
-	var year int
-	if len(submatches[3]) == 0 {
-		now := time.Now().In(constants.MinyanLocation())
-		if month > int(now.Month()) || ((month == int(now.Month())) && (day >= now.Day())) {
-			year = now.Year()
-		} else {
-			// For dates before today, assume we are talking about next year
-			year = now.Year() + 1
+func joinRegexOptions(values iter.Seq[string]) string {
+	var builder strings.Builder
+	builder.WriteString("(?:")
+
+	first := true
+	for s := range values {
+		if !first {
+			builder.WriteRune('|')
 		}
-	} else {
-		year, err = strconv.Atoi(submatches[3])
+		first = false
+		builder.WriteString("(?:")
+		builder.WriteString(s)
+		builder.WriteRune(')')
+	}
+	builder.WriteRune(')')
+
+	return builder.String()
+}
+
+func singleDateRegex(prefix string) string {
+	weekday_names := joinRegexOptions(maps.Keys(dayOfWeekMap))
+	month_names := joinRegexOptions(maps.Keys(monthMap))
+
+	// 1-2 digit number with (optional) correct ordinal suffix
+	ordinal_suffix := joinRegexOptions(slices.Values([]string{
+		`(?<=1)(?<!11)st`,
+		`(?<=2)(?<!12)nd`,
+		`(?<=3)(?<!13)rd`,
+		`(?<=[04-9])th`,
+		`(?<=1\d)th`}))
+
+	template := joinRegexOptions(slices.Values([]string{
+		// today|tomorrow
+		`(?P<rel>(?:today)|(?:tomorrow))`,
+		// mon|monday|tue|tuesday...
+		`(?P<weekday>` + weekday_names + `)`,
+		// (Month|Mon) [d]d[st|nd|rd|th][[,] [YY]YY]
+		`(?P<long>(?P<long_M>` + month_names + `)\s+(?P<long_D>\d{1,2})(?:` + ordinal_suffix + `)?(?:\s*,?\s+(?P<long_Y>(?:\d{2})?\d{2}))?)`,
+		// [M]M/[D]D/[[YY]YY]
+		`(?P<short>(?P<short_M>\d{1,2})/(?P<short_D>\d{1,2})(?:/(?P<short_Y>(?:\d{2})?\d{2}))?)`,
+	}))
+
+	return strings.ReplaceAll(template, `(?P<`, `(?P<`+prefix)
+}
+
+type ParsedSingleDateType int
+
+const (
+	ParsedSingleDateType_Date ParsedSingleDateType = iota
+	ParsedSingleDateType_Today
+	ParsedSingleDateType_Tomorrow
+	ParsedSingleDateType_Weekday
+)
+
+func parseSingleDateFromMatch(prefix string, basedate time.Time, matches map[string]string) (time.Time, ParsedSingleDateType, error) {
+	if v, ok := matches[prefix+"rel"]; ok {
+		daystring := strings.ToLower(v)
+		switch daystring {
+		case "today":
+			d := time.Now().In(constants.MinyanLocation())
+			return startOfDate(d), ParsedSingleDateType_Today, nil
+		case "tomorrow":
+			d := time.Now().In(constants.MinyanLocation()).AddDate(0, 0, 1)
+			return startOfDate(d), ParsedSingleDateType_Tomorrow, nil
+		}
+		return time.Time{}, 0, fmt.Errorf("Unknown relative date %s", daystring)
+	} else if v, ok := matches[prefix+"weekday"]; ok {
+		weekday := dayOfWeekMap[strings.ToLower(v)]
+		baseweekday := basedate.Weekday()
+
+		offsetDays := int(weekday) - int(baseweekday)
+		if offsetDays <= 0 {
+			// Go to next week
+			offsetDays += 7
+		}
+
+		return startOfDate(basedate.AddDate(0, 0, offsetDays)), ParsedSingleDateType_Weekday, nil
+	} else if _, ok := matches[prefix+"short"]; ok {
+		day, err := strconv.Atoi(matches[prefix+"short_D"])
 		if err != nil {
-			return nil, err
+			return time.Time{}, 0, err
 		}
-		if len(submatches[3]) == 2 {
-			year += 2000
+
+		month, err := strconv.Atoi(matches[prefix+"short_M"])
+		if err != nil {
+			return time.Time{}, 0, err
+		}
+
+		var year int
+		if yearString, hasYear := matches[prefix+"short_Y"]; hasYear {
+			year, err = strconv.Atoi(yearString)
+			if err != nil {
+				return time.Time{}, 0, err
+			}
+			// For 2-digit years, add 2000
+			if year < 100 {
+				year += ((basedate.Year() / 100) * 100)
+			}
+		} else {
+			year = nextOccurenceYear(basedate, month, day)
+		}
+
+		rtn, err := tryMakeDate(year, month, day)
+		return rtn, ParsedSingleDateType_Date, err
+
+	} else if _, ok := matches[prefix+"long"]; ok {
+		day, err := strconv.Atoi(matches[prefix+"long_D"])
+		if err != nil {
+			return time.Time{}, 0, err
+		}
+
+		month := int(monthMap[strings.ToLower(matches[prefix+"long_M"])])
+
+		var year int
+		if yearString, hasYear := matches[prefix+"long_Y"]; hasYear {
+			year, err = strconv.Atoi(yearString)
+			if err != nil {
+				return time.Time{}, 0, err
+			}
+		} else {
+			year = nextOccurenceYear(basedate, month, day)
+		}
+
+		rtn, err := tryMakeDate(year, month, day)
+		return rtn, ParsedSingleDateType_Date, err
+	}
+	return time.Time{}, 0, fmt.Errorf("Unknown date match %v", matches)
+}
+
+var dateRangeRegex = regexp2.MustCompile(fmt.Sprintf(`(?ims)^\s*%s\s*$`, joinRegexOptions(slices.Values(
+	[]string{
+		// Upcoming (also matches blank string)
+		`(?P<upcoming>(?:upcoming)?)`,
+		// Upcoming week
+		`(?P<upcomingweek>week)`,
+		// Week of X
+		`(?P<weekof>week\s+of\s+` + singleDateRegex("weekof_") + `)`,
+		// Single date
+		`(?P<date>` + singleDateRegex("date_") + `)`,
+		// X to X
+		`(?P<to>` + singleDateRegex("to1_") + `\s+to\s+` + singleDateRegex("to2_") + `)`,
+	}))), regexp2.RE2)
+
+func matchRegexGetGroups(r *regexp2.Regexp, s string) map[string]string {
+	match, err := r.FindStringMatch(s)
+	if err != nil || match == nil {
+		return nil
+	}
+
+	result := make(map[string]string)
+	for i, name := range r.GetGroupNames() {
+		if name != "" {
+			group := match.GroupByNumber(i)
+			if len(group.Captures) != 0 {
+				result[name] = group.String()
+			}
 		}
 	}
 
-	return &ParsedDate{
-		year:  year,
-		month: month,
-		day:   day}, nil
+	return result
 }
 
 type TimesCommand struct {
-	date          time.Time
+	dtStart       time.Time
+	dtEnd         time.Time
 	header        string
 	sephardic     bool
 	includePassed bool
+}
+
+func formatDateStringForSingle(date time.Time, dateType ParsedSingleDateType) string {
+	switch dateType {
+	case ParsedSingleDateType_Date:
+		return "date:"
+	case ParsedSingleDateType_Today:
+		return "today"
+	case ParsedSingleDateType_Tomorrow:
+		return "tomorrow"
+	case ParsedSingleDateType_Weekday:
+		return date.Weekday().String()
+	}
+	return ""
+}
+
+func formatDateStringForMultiple(date time.Time, dateType ParsedSingleDateType) string {
+	dateStr := date.Format("1/2/06")
+	return dateStr
+	// switch dateType {
+	// case ParsedSingleDateType_Date:
+	// 	return dateStr
+	// case ParsedSingleDateType_Today:
+	// 	return "today (" + dateStr + ")"
+	// case ParsedSingleDateType_Tomorrow:
+	// 	return "tomorrow (" + dateStr + ")"
+	// case ParsedSingleDateType_Weekday:
+	// 	return date.Weekday().String() + " (" + dateStr + ")"
+	// }
+	// return ""
+}
+
+func upcomingMinyanTimesCommand(isSephardic bool) *TimesCommand {
+	dtStart := time.Now().In(constants.MinyanLocation())
+	dtEnd := dtStart.Add(25 * time.Hour)
+
+	return &TimesCommand{
+		dtStart:       dtStart,
+		dtEnd:         dtEnd,
+		header:        "Upcoming minyan times",
+		sephardic:     isSephardic,
+		includePassed: false,
+	}
 }
 
 func parseTimeCommand(text string) (*TimesCommand, error) {
@@ -368,48 +598,101 @@ func parseTimeCommand(text string) (*TimesCommand, error) {
 	var isSephardic bool = false
 	text, isSephardic = util.RemoveAndCheckMatch(rSepharidic, text)
 
-	if len(text) == 0 {
-		// Plain "!times" command
+	matches := matchRegexGetGroups(dateRangeRegex, text)
+	if matches == nil {
+		return nil, fmt.Errorf("Date did not match: '%s'", text)
+	}
+
+	if _, ok := matches["upcoming"]; ok {
+		return upcomingMinyanTimesCommand(isSephardic), nil
+	} else if _, ok := matches["upcomingweek"]; ok {
+		dtStart := startOfDate(time.Now().In(constants.MinyanLocation()))
+		dtEnd := plusOneWeek(dtStart)
+
 		return &TimesCommand{
-			date:          time.Now().In(constants.MinyanLocation()),
-			header:        "*Upcoming minyan times for today*",
+			dtStart:       dtStart,
+			dtEnd:         dtEnd,
+			header:        "Minyan times for the upcoming week",
 			sephardic:     isSephardic,
 			includePassed: false,
 		}, nil
-	}
+	} else if _, ok := matches["date"]; ok {
+		date, dateType, err := parseSingleDateFromMatch(
+			"date_",
+			time.Now().In(constants.MinyanLocation()),
+			matches)
 
-	if text == "today" {
+		if err != nil {
+			return nil, err
+		}
+
+		dtStart, dtEnd := datetimeRangeForDay(date)
+
+		headerDateStr := formatDateStringForSingle(date, dateType)
 		return &TimesCommand{
-			date:          time.Now().In(constants.MinyanLocation()),
-			header:        "*Minyan times for today*",
+			dtStart:       dtStart,
+			dtEnd:         dtEnd,
+			header:        "Minyan times for " + headerDateStr,
+			sephardic:     isSephardic,
+			includePassed: true,
+		}, nil
+	} else if _, ok := matches["weekof"]; ok {
+		date, dateType, err := parseSingleDateFromMatch(
+			"weekof_",
+			time.Now().In(constants.MinyanLocation()),
+			matches)
+
+		if err != nil {
+			return nil, err
+		}
+
+		dtStart := startOfDate(date.AddDate(0, 0, -int(date.Weekday())))
+		dtEnd := plusOneWeek(dtStart)
+
+		headerDateStr := formatDateStringForMultiple(date, dateType)
+		return &TimesCommand{
+			dtStart:       dtStart,
+			dtEnd:         dtEnd,
+			header:        "Minyan times for the week of " + headerDateStr,
+			sephardic:     isSephardic,
+			includePassed: true,
+		}, nil
+	} else if _, ok := matches["to"]; ok {
+		date1, dateType1, err := parseSingleDateFromMatch(
+			"to1_",
+			time.Now().In(constants.MinyanLocation()),
+			matches)
+
+		if err != nil {
+			return nil, err
+		}
+
+		dtStart := startOfDate(date1)
+
+		date2, dateType2, err := parseSingleDateFromMatch(
+			"to2_",
+			dtStart,
+			matches)
+
+		if err != nil {
+			return nil, err
+		}
+
+		dtEnd := endOfDate(date2)
+
+		headerDateStr1 := formatDateStringForMultiple(date1, dateType1)
+		headerDateStr2 := formatDateStringForMultiple(date2, dateType2)
+
+		return &TimesCommand{
+			dtStart:       dtStart,
+			dtEnd:         dtEnd,
+			header:        "Minyan times from " + headerDateStr1 + " to " + headerDateStr2,
 			sephardic:     isSephardic,
 			includePassed: true,
 		}, nil
 	}
 
-	if text == "tomorrow" {
-		return &TimesCommand{
-			date:          time.Now().In(constants.MinyanLocation()).AddDate(0, 0, 1),
-			header:        "*Minyan times for tomorrow*",
-			sephardic:     isSephardic,
-			includePassed: true,
-		}, nil
-	}
-
-	date, err := tryParseAsDate(text)
-	if err != nil {
-		return nil, err
-	}
-	if date != nil {
-		return &TimesCommand{
-			date:          *date,
-			header:        "*Minyan times for date:*",
-			sephardic:     isSephardic,
-			includePassed: true,
-		}, nil
-	}
-
-	return nil, fmt.Errorf("extra text '%s'", text)
+	return nil, fmt.Errorf("Invalid date match. Groups %v, string %q", matches, text)
 }
 
 func (state *ProgramState) HandleMinyanMessage(v *events.Message) {
@@ -425,5 +708,31 @@ func (state *ProgramState) HandleMinyanMessage(v *events.Message) {
 		}
 
 		state.SendMinyanTimes(command, v.Info.Chat, true)
+	} else if strings.HasPrefix(inputText, "!help") {
+		state.QueueSimpleStringMessage(v.Info.Chat, strings.Join([]string{
+			"*Usage:*",
+			"",
+			"`!times` or `!times upcoming`",
+			"- Displays minyan times for the next 25 hours",
+			"",
+			"`!times week`",
+			"- Displays minyan times for the next 7 days",
+			"",
+			"`!times DATE`",
+			"- Displays minyan times for `DATE`",
+			"",
+			"`!times week of DATE`",
+			"- Displays minyan times for the week of `DATE`",
+			"",
+			"`!times DATE to DATE`",
+			"- Displays minyan times between the first `DATE` and the second `DATE`",
+			"",
+			"The `DATE` can be in any of the following formats (capitalization doesn't matter):",
+			"- `today` or `tomorrow`",
+			"- A day of the week like `Mon`, `Tuesday`, `Shabbat`, etc.",
+			"- A date in the format `M[M]/D[D][/[YY]YY]`, e.g. `1/21`, `08/15/25`, `11/07/2026`",
+			"- A date in the format `Month DD[th][[,] YYYY]`, e.g. `Jan 21st`, `August 15 2025`, `November 7th, 2000`",
+		}, "\n"))
+
 	}
 }

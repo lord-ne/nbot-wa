@@ -13,6 +13,7 @@ require (
 	go.mau.fi/whatsmeow v0.0.0-20260116142645-06f473759141
 	google.golang.org/api v0.260.0
 	google.golang.org/protobuf v1.36.11
+	github.com/dlclark/regexp2 v1.11.5
 )
 
 require (
