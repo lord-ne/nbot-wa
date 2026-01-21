@@ -574,7 +574,7 @@ func formatDateStringForMultiple(date time.Time, dateType ParsedSingleDateType) 
 
 func upcomingMinyanTimesCommand(isSephardic bool) *TimesCommand {
 	dtStart := time.Now().In(constants.MinyanLocation())
-	dtEnd := dtStart.Add(25 * time.Hour)
+	dtEnd := endOfDate(dtStart.AddDate(0, 0, 1));
 
 	return &TimesCommand{
 		dtStart:       dtStart,
@@ -713,10 +713,10 @@ func (state *ProgramState) HandleMinyanMessage(v *events.Message) {
 			"*Usage:*",
 			"",
 			"`!times` or `!times upcoming`",
-			"- Displays minyan times for the next 25 hours",
+			"- Displays upcoming minyan times for today and tomorrow",
 			"",
 			"`!times week`",
-			"- Displays minyan times for the next 7 days",
+			"- Displays upcoming minyan times for the next 7 days",
 			"",
 			"`!times DATE`",
 			"- Displays minyan times for `DATE`",
