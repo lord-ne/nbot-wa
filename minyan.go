@@ -545,7 +545,7 @@ type TimesCommand struct {
 func formatDateStringForSingle(date time.Time, dateType ParsedSingleDateType) string {
 	switch dateType {
 	case ParsedSingleDateType_Date:
-		return "date:"
+		return "date"
 	case ParsedSingleDateType_Today:
 		return "today"
 	case ParsedSingleDateType_Tomorrow:
